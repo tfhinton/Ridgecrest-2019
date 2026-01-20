@@ -6,6 +6,12 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy",
     "matplotlib",
+    "xarray>=2024.7.0",
+    "rioxarray>=0.15.0",
+    "rasterio>=1.4.3",
+    "shapely>=2.0.7",
+    "geopandas>=1.0.1",
+    "scipy>=1.13.1",
 ]
 
 [dependency-groups]
