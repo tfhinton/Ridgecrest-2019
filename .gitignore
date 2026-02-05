@@ -3,3 +3,5 @@ qgis/
 .DS_Store
 *.code-workspace
 .vscode/
+.venv/
+results/
