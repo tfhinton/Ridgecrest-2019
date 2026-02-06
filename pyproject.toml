@@ -14,6 +14,9 @@ dependencies = [
     "scipy>=1.13.1",
     "csi",
     "okada4py",
+    "h5py>=3.14.0",
+    "cartopy>=0.23.0",
+    "netcdf4>=1.7.2",
 ]
 
 [dependency-groups]
