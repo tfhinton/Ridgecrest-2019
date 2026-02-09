@@ -50,18 +50,16 @@ slipmodel:
 
             dipslip:
                 count = {slipmodel.model.patches}
-                prior = altar.cuda.distributions.tgaussian
+                prior = altar.cuda.distributions.gaussian
                 prior:
-                    support = (0, 5.)
                     mean = 0.
                     sigma = 2.
 
             trans:
                 count = 3
-                prior = altar.cuda.distributions.tgaussian
+                prior = altar.cuda.distributions.gaussian
                 prior.mean = 0.
                 prior.sigma = .1
-                prior.support = (-1.,1.)
                 
                 
     controller:
