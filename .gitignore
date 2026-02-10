@@ -5,3 +5,4 @@ qgis/
 .vscode/
 .venv/
 results/
+__pycache__/

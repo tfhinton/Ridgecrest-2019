@@ -7,6 +7,7 @@ import csi.imagedownsampling as imdown
 import csi.imagecovariance as imcov
 import csi.multifaultsolve as multiflt
 import csi.transformation as transformation
+import csi.gps as gr
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
@@ -53,7 +54,7 @@ def main():
 
     ####    INSAR DATA    ####
     insar_names = ["A064_20190704-0710", "D071_20190704-0716"]
-    datasets = []
+    insars = []
 
     for insar_name in insar_names:
 
@@ -75,7 +76,6 @@ def main():
 
         if PLOT:
             sar.plot()
-            plt.show(block=True)
 
 
 
@@ -89,7 +89,6 @@ def main():
 
         if PLOT:
             covar.plot(data='all', plotData=True)
-            plt.show(block=True)
 
         sigma, lamda = covar.datasets[insar_name]["Sigma"], covar.datasets[insar_name]["Lambda"]
         print("SAR covariance", (sigma, lamda))
@@ -109,14 +108,27 @@ def main():
 
         sar = downsampler.newimage
 
-        if PLOT:
-            sar.plot(title="Final SAR", plotType="flat")
-            sar.plot(title="Final SAR", plotType="scatter")
-            plt.show(block=True)
-
+        print("Building Cd with variable sigma and lambda:", (sigma, lamda))
         sar.buildCd(sigma, lamda, function='exp')
-        datasets.append(sar)
+        insars.append(sar)
 
+
+
+    ####    GNSS DATA    ####
+    gnss_dir = os.path.join(main_dir, "data/gnss")
+    gnss_names = ["unr_gps_offsets_full.txt"]
+    gnsss = []
+
+    for gnss_name in gnss_names:
+        gnss = gr(gnss_name, utmzone=utm_zone, lon0=lon0, lat0=lat0)
+        gnss.read_from_enu(os.path.join(gnss_dir, gnss_name), header=2, checkNaNs=False)
+        gnss.reject_stations_awayfault(100, faults)
+        gnss.buildCd(direction='enu')
+        gnss.Cd *= 4.
+        gnsss.append(gnss)
+
+
+    datasets = insars + gnsss
 
 
     ####   BUILD GREENS FUNCTIONS    ####
@@ -132,7 +144,7 @@ def main():
 
     ####    DEFINE RAMP    ####
     trans = transformation('Orbits and reference frame', utmzone="11", lon0=lon0, lat0=lat0)
-    trans.buildGFs(datasets, [3]*len(datasets))
+    trans.buildGFs(datasets, [3]*len(insars) + [None]*len(gnsss))
     trans.assembleGFs(datasets)
     trans.assembled(datasets)
     trans.assembleCd(datasets)
@@ -153,9 +165,12 @@ def main():
     ####    WRITE TO H5 FILES    ####
     inputs_dir = os.path.join(main_dir, "results/01/inputs")
 
-    multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
+    # multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
     multi.writeData2H5File(os.path.join(inputs_dir, "data.h5"), name="data")
     multi.writeCd2H5File(os.path.join(inputs_dir, "covariance.h5"), name="covariance")
+    gfs = multi.OrganizeGBySlipMode()
+    with h5py.File(os.path.join(inputs_dir, "greens_functions.h5"), "w") as f:
+        f.create_dataset("gf", data=gfs)
     with h5py.File(os.path.join(inputs_dir, "patch_areas.h5"), "w") as f:
         f.create_dataset("patch_areas", data=areas)
 
