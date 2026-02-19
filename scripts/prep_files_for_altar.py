@@ -54,7 +54,9 @@ def main():
 
     ####    INSAR DATA    ####
     insar_names = ["A064_20190704-0710", "D071_20190704-0716"]
+    # insar_names = ["D071_20190704-0716"]
     insars = []
+    covars = []
 
     for insar_name in insar_names:
 
@@ -111,6 +113,7 @@ def main():
         print("Building Cd with variable sigma and lambda:", (sigma, lamda))
         sar.buildCd(sigma, lamda, function='exp')
         insars.append(sar)
+        covars.append(covar)
 
 
 
@@ -126,6 +129,12 @@ def main():
         gnss.buildCd(direction='enu')
         gnss.Cd *= 4.
         gnsss.append(gnss)
+
+
+
+    ####    OPTICAL DATA    ####
+    optical_dir = os.path.join(main_dir, "data/optical")
+
 
 
     datasets = insars + gnsss
@@ -161,20 +170,27 @@ def main():
     print("Cd shape:", multi.Cd.shape)
 
 
+    ####    MODEL COVARIANCE    ####
+    for fault in faults:
+        fault.buildCm(8., 1.)
+    trans.buildCm(1000.)
+    multi.assembleCm()
+
+
 
     ####    WRITE TO H5 FILES    ####
-    inputs_dir = os.path.join(main_dir, "results/01/inputs")
+    inputs_dir = os.path.join(main_dir, "results/in01/inputs")
 
-    # multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
+    multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
     multi.writeData2H5File(os.path.join(inputs_dir, "data.h5"), name="data")
     multi.writeCd2H5File(os.path.join(inputs_dir, "covariance.h5"), name="covariance")
-    gfs = multi.OrganizeGBySlipMode()
-    with h5py.File(os.path.join(inputs_dir, "greens_functions.h5"), "w") as f:
-        f.create_dataset("gf", data=gfs)
     with h5py.File(os.path.join(inputs_dir, "patch_areas.h5"), "w") as f:
         f.create_dataset("patch_areas", data=areas)
+    gfs = multi.OrganizeGBySlipmode()
+    with h5py.File(os.path.join(inputs_dir, "greens_functions.h5"), "w") as f:
+        f.create_dataset("gf", data=gfs)
 
-    return multi, faults, datasets, trans
+    return multi, faults, datasets, trans, covars
 
 
 
