@@ -17,6 +17,14 @@ dependencies = [
     "h5py>=3.14.0",
     "cartopy>=0.23.0",
     "netcdf4>=1.7.2",
+    "seaborn>=0.13.2",
+    "mpmath>=1.4.0",
+    "scikit-learn>=1.6.1",
+    "pymap3d>=3.2.0",
+    "cmocean>=4.0.3",
+    "rockhound>=0.2.0",
+    "pillow>=11.3.0",
+    "colormaps>=0.5.0",
 ]
 
 [dependency-groups]

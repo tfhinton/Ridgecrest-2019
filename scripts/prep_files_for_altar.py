@@ -11,6 +11,7 @@ import csi.gps as gr
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
+import pickle
 
 
 
@@ -47,14 +48,13 @@ def main():
     areas = []
     for fault in faults:
         fault.computeArea()
-        areas += fault.area
-    areas = np.array(areas)
-
+        # areas += fault.area
+    # areas = np.array(areas)
 
 
     ####    INSAR DATA    ####
     insar_names = ["A064_20190704-0710", "D071_20190704-0716"]
-    # insar_names = ["D071_20190704-0716"]
+    insar_names = ["D071_20190704-0716"]
     insars = []
     covars = []
 
@@ -87,13 +87,14 @@ def main():
         covar.selectedZones = []
         covar.maskOut([ 360-117.88,360-117.3,35.53,35.9])
 
-        covar.computeCovariance(function='exp', frac=0.005, every=0.5, distmax=35.,tol=1e-10)
+        covar.computeCovariance(function='exp', frac=0.01, every=0.5, distmax=35.,tol=1e-10)
 
         if PLOT:
             covar.plot(data='all', plotData=True)
 
         sigma, lamda = covar.datasets[insar_name]["Sigma"], covar.datasets[insar_name]["Lambda"]
         print("SAR covariance", (sigma, lamda))
+        print(sar.Cd)
 
 
 
@@ -120,6 +121,7 @@ def main():
     ####    GNSS DATA    ####
     gnss_dir = os.path.join(main_dir, "data/gnss")
     gnss_names = ["unr_gps_offsets_full.txt"]
+    gnss_names = []
     gnsss = []
 
     for gnss_name in gnss_names:
@@ -136,8 +138,8 @@ def main():
     optical_dir = os.path.join(main_dir, "data/optical")
 
 
-
     datasets = insars + gnsss
+    
 
 
     ####   BUILD GREENS FUNCTIONS    ####
@@ -172,25 +174,30 @@ def main():
 
     ####    MODEL COVARIANCE    ####
     for fault in faults:
-        fault.buildCm(8., 1.)
+        fault.buildCm(1.317, 5., lam0=1.)
     trans.buildCm(1000.)
     multi.assembleCm()
 
 
 
     ####    WRITE TO H5 FILES    ####
-    inputs_dir = os.path.join(main_dir, "results/in01/inputs")
+    inputs_dir = os.path.join(main_dir, "results/in07/inputs")
 
-    multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
+    # multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
     multi.writeData2H5File(os.path.join(inputs_dir, "data.h5"), name="data")
-    multi.writeCd2H5File(os.path.join(inputs_dir, "covariance.h5"), name="covariance")
-    with h5py.File(os.path.join(inputs_dir, "patch_areas.h5"), "w") as f:
-        f.create_dataset("patch_areas", data=areas)
+    multi.writeCd2H5File(os.path.join(inputs_dir, "cd.h5"), name="covariance")
+    with h5py.File(os.path.join(inputs_dir, "patch_areas_main.h5"), "w") as f:
+        f.create_dataset("patch_areas", data=faults[0].area)
+    with h5py.File(os.path.join(inputs_dir, "patch_areas_secondary.h5"), "w") as f:
+        f.create_dataset("patch_areas", data=faults[1].area)
     gfs = multi.OrganizeGBySlipmode()
-    with h5py.File(os.path.join(inputs_dir, "greens_functions.h5"), "w") as f:
+    with h5py.File(os.path.join(inputs_dir, "green.h5"), "w") as f:
         f.create_dataset("gf", data=gfs)
 
-    return multi, faults, datasets, trans, covars
+    with open(os.path.join(inputs_dir, "csi.pickle"), "wb") as f:
+        pickle.dump((multi, faults, datasets, trans), f)
+
+    return multi, faults, datasets, trans
 
 
 
