@@ -54,7 +54,7 @@ def main():
 
     ####    INSAR DATA    ####
     insar_names = ["A064_20190704-0710", "D071_20190704-0716"]
-    insar_names = ["D071_20190704-0716"]
+    # insar_names = ["D071_20190704-0716"]
     insars = []
     covars = []
 
@@ -99,7 +99,7 @@ def main():
 
 
         ####    DISTANCE-BASED DOWNSAMPLING    ####
-        startWindowSize, minimumWindowSize, chardist, expodist, tol, reject_distance = 10., 1.25, 1.5, 0.7, 0.005, 0.5
+        startWindowSize, minimumWindowSize, chardist, expodist, tol, reject_distance = 20., 2.5, 1.5, 0.7, 0.005, 0.5
 
         downsampler = imdown(insar_name, sar, faults)
         downsampler.initialstate(startWindowSize, minimumWindowSize, tolerance=tol, plot=False)
@@ -121,7 +121,7 @@ def main():
     ####    GNSS DATA    ####
     gnss_dir = os.path.join(main_dir, "data/gnss")
     gnss_names = ["unr_gps_offsets_full.txt"]
-    gnss_names = []
+    # gnss_names = []
     gnsss = []
 
     for gnss_name in gnss_names:
@@ -181,7 +181,7 @@ def main():
 
 
     ####    WRITE TO H5 FILES    ####
-    inputs_dir = os.path.join(main_dir, "results/in07/inputs")
+    inputs_dir = os.path.join(main_dir, "results/in12/inputs")
 
     # multi.writeGFs2H5File(os.path.join(inputs_dir, "greens_functions.h5"), name="gf")
     multi.writeData2H5File(os.path.join(inputs_dir, "data.h5"), name="data")

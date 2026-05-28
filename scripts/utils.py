@@ -5,6 +5,7 @@ from matplotlib import colormaps
 import matplotlib.cm as cmx
 import matplotlib.patches as patches
 from matplotlib.collections import PatchCollection
+from matplotlib.animation import FuncAnimation
 import seaborn as sns
 import cmocean.cm as cmo
 from PIL import ImageColor
@@ -12,6 +13,9 @@ import colormaps as cmap
 from thea.CurvedText import CurvedText
 import sys
 import os
+import cartopy as ccrs
+import matplotlib.ticker as mticker
+import matplotlib as mpl
 
 colorsco=[(250,250,250),(255,247,236),(254,232,200),(253,212,158),(253,187,132),(252,141,89),(239,101,72),(215,48,31),(179,0,0),(127,0,0)]
 colorsco_rgba = [(y[0]/255., y[1]/255., y[2]/255.) for y in colorsco]
@@ -28,6 +32,11 @@ colorsco_above_rgba = colorsco_rgba + above_rgba
 def plotSlip2D(fault, save_path="./slip_2d.pdf", slip=None, valmax=None, slipdir=None, sigma=False, legend='Coseismic slip (cm)',colorbar=colorsco_above_rgba,savename='slip2d',epicenter=None,index=False):
     '''
     '''
+    labelsize = 13.
+    ticksize=11.
+    mpl.rcParams['xtick.labelsize'] = ticksize
+    mpl.rcParams['ytick.labelsize'] = ticksize
+    mpl.rcParams['axes.labelsize'] = labelsize
     if sigma.__class__ is list or sigma.__class__ is np.ndarray:
         sigma = np.array(sigma)
         if slip in ('strikeslip','ss','strike-slip'):
@@ -94,9 +103,9 @@ def plotSlip2D(fault, save_path="./slip_2d.pdf", slip=None, valmax=None, slipdir
 #        dep.append(-fault.patch[i,:,2] )
         dep.append(-np.sqrt(fault.patch[i,:,2]**2 ))
     
-    fig, ax = plt.subplots(1,figsize=(7,3))
+    fig, ax = plt.subplots(1,figsize=(10,4))
     ax.set_xlabel('Distance along strike (km)')
-    ax.set_ylabel('Distance along dip (km)')
+    ax.set_ylabel('Depth (km)')
     
     rects = []
     for i in range(len(dis)):
@@ -185,13 +194,19 @@ def plotSlip2D(fault, save_path="./slip_2d.pdf", slip=None, valmax=None, slipdir
         return -np.interp(np.abs(x), xold, xnew)
     def inverse(x):
         return -np.interp(np.abs(x), xnew, xold)
-    ax2 = ax.secondary_yaxis(-0.1, functions=(forward, inverse))
-    ax2.set_ylabel('Depth (km)')
-    ax2.set_yticks([0,-10,-20,-40,-60,-80])
+    # ax2 = ax.secondary_yaxis(-0.1, functions=(forward, inverse))
+    # ax2.set_ylabel('Depth (km)')
+    # ax2.set_yticks([0,-10,-20,-40,-60,-80])
+
+    ax.invert_xaxis()
+    x_max = np.amax(dis)
+    ax.set_xticks([x_max - 0, x_max - 20, x_max - 40])  # or however many ticks you want
+    ax.set_xticklabels([0,20,40])  # set the labels to be the same as the tick values])
         
 
     ## bivariate colorbar
     cax = fig.add_axes([0.93, 0.23, 0.05, 0.5])
+    ax.set_position([0.02, 0.1, 0.85, 0.9])
     xx, yy = np.mgrid[0:valmax+5:100j,0:1.:30j]
     C_map = scalarMap.to_rgba(xx)
     cax.imshow(C_map)
@@ -293,6 +308,7 @@ def plotSlipBivariate(fault,sigma,save_path="./2d_slip_bivariate.pdf",slip=None,
             uncmax = np.amax(sgm)
         else:
             uncmax = sigmamax
+        
         colval = ColValSup(slp,sgm,slipmax,uncmax)
         
         fault.patch = np.array(fault.patch)
@@ -312,6 +328,7 @@ def plotSlipBivariate(fault,sigma,save_path="./2d_slip_bivariate.pdf",slip=None,
         ax.set_xlabel('\n Distance along strike (km)')
         ax.set_ylabel('\n Depth (km)')
         
+        # MAIN PLOTTING SECTION 
         rects = []
         for i in range(len(dis)):
             dis[i] = np.vstack(dis[i])
@@ -328,6 +345,8 @@ def plotSlipBivariate(fault,sigma,save_path="./2d_slip_bivariate.pdf",slip=None,
             rects.append(rect)
         p = PatchCollection(rects, match_original=True)
         ax.add_collection(p)
+
+        # END MAIN PLOTTING SECTION
         
     #     if slipdir is not None:
     #         rake = np.loadtxt(slipdir, comments='>')
@@ -364,9 +383,9 @@ def plotSlipBivariate(fault,sigma,save_path="./2d_slip_bivariate.pdf",slip=None,
         print("L", L)
         wdgs = []
 
-        center = [8.8, 1]
+        center = [8.77, 1]
         L = 1.7
-        patch = patches.Wedge(center, L/4, 45, 135, fc="orange", transform=fig.dpi_scale_trans)
+        # patch = patches.Wedge(center, L/4, 45, 135, fc="orange", transform=fig.dpi_scale_trans)
         # ax_colbar.add_patch(patch)
         ax_colbar.set_axis_off()
         ax_colbar.set_xticks([])
@@ -410,7 +429,10 @@ def plotSlipBivariate(fault,sigma,save_path="./2d_slip_bivariate.pdf",slip=None,
         for i in range(len(labels)):
             ax_colbar.text(coords[i][0]+offset[i][0],coords[i][1]+offset[i][1],labels[i],rotation=rot[i],rotation_mode='anchor',ha='center',va=vas[i], transform=fig.dpi_scale_trans, fontsize=8.)
         
-        # # legend titles
+        # legend titles
+        ax_colbar.text(center[0], center[1]+1.15*L, 'Slip (m)', rotation=0, ha='center', va='center', transform=fig.dpi_scale_trans, fontsize=9.)
+        ax_colbar.text(center[0]+0.39*L, center[1]+0.27*L, 'Standard deviation (m)', rotation=60, ha='center', va='center', transform=fig.dpi_scale_trans, fontsize=9.)
+
         # wdg = patches.Wedge(center, L, -30+90, 30+90, width=None)
         # x = wdg.get_path().vertices[:,0]
         # y = wdg.get_path().vertices[:,1]
@@ -487,3 +509,286 @@ def ColValSup(slip,sigma,valmax,sigmamax):
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         print(exc_type, fname, exc_tb.tb_lineno)
     return colval
+
+
+
+def animateSlipConvergenceBivariate(fault,slips,sigmas,save_path="./2d_slip_convergence_bivariate.mp4",slip=None, valmax=None, sigmamax=None, slipdir=None, savedir='./',epicenter=None):
+    '''
+     
+    '''
+    try:
+        # Bivariate colors defined from base to top and from left to right
+        bivcolors=[ (208, 208, 208),
+                    (232, 232, 232),  (164, 128, 128),
+                    (250, 250, 250), (237,204,187), (214, 137, 127), (149, 75, 75),
+                    (254, 248, 241), (254, 227, 190), (253, 173, 119), (248, 130, 84), (233, 87, 61), (210, 41, 27), (173, 0, 0), (127, 0, 0)]
+        bivcolors_rgba= [(x[0]/255,x[1]/255,x[2]/255) for x in bivcolors]
+
+        cmap = colors.ListedColormap(bivcolors_rgba)
+        cNorm  = colors.Normalize(0,15)
+        scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=cmap)
+        scalarMap.set_array([])
+                
+        # if slip in ('strikeslip','ss','strike-slip'):
+        #     slp = fault.slip[:,0].copy()
+        #     sgm = sigma
+        # elif slip in ('dipslip','ds','dip-slip'):
+        #     slp = fault.slip[:,1].copy()
+        #     sgm = sigma[len(sigma)//2:len(sigma)]
+        # elif slip in ('total','tot'):
+        #     slp = np.sqrt(fault.slip[:,0]**2 + fault.slip[:,1]**2 + fault.slip[:,2]**2)
+        #     sgm = np.sqrt(sigma[0:len(sigma)//2]**2 + sigma[len(sigma)//2:len(sigma)]**2)
+        # else:
+        #     slp = np.sqrt(fault.slip[:,0]**2 + fault.slip[:,1]**2 + fault.slip[:,2]**2)        
+        #     sgm = np.sqrt(sigma[0:len(sigma)//2]**2 + sigma[len(sigma)//2:len(sigma)]**2)
+            
+        if valmax is None:
+            slipmax = np.amax(slips)
+        else:
+            slipmax = valmax
+        if sigmamax is None:
+            uncmax = np.amax(sigmas)
+        else:
+            uncmax = sigmamax
+        # colval = ColValSup(slp,sgm,slipmax,uncmax)
+        # print("slipmax", slipmax)
+        # print("uncmax", uncmax)
+        
+        fault.patch = np.array(fault.patch)
+        x0 = fault.patch[0,0,0]
+        y0 = fault.patch[0,0,1]
+        dis = []
+        dep = []
+        for i in range(np.shape(fault.patch)[0]):
+            x = fault.patch[i,:,0]
+            y = fault.patch[i,:,1]
+            d = np.sqrt((x-x0)**2 + (y-y0)**2)
+            dis.append(d)
+            dep.append(-fault.patch[i,:,2] )
+        
+        fig, (ax, ax_colbar) = plt.subplots(1,2,figsize=(10,4), gridspec_kw={'width_ratios': [7.5,2.5]}, layout="constrained")
+        # fig, ax = plt.subplots(1,figsize=(7,4))
+        ax.set_xlabel('\n Distance along strike (km)')
+        ax.set_ylabel('\n Depth (km)')
+        
+        # MAIN PLOTTING SECTION 
+        rects = []
+        for i in range(len(dis)):
+            dis[i] = np.vstack(dis[i])
+            dep[i] = np.vstack(dep[i])
+            vertex = np.hstack((dis[i],dep[i]))
+            rect = patches.Polygon( vertex )
+            # if slip is None:
+            #     rect.set_color('gray')
+            # else:
+            #     colorval = scalarMap.to_rgba(colval[i])
+            #     rect.set_color(colorval)
+            rect.set_edgecolor('white')
+            rect.set_linewidth(0.1)
+            rects.append(rect)
+        p = PatchCollection(rects, match_original=True)
+        ax.add_collection(p)
+
+        # END MAIN PLOTTING SECTION
+
+        wdgs = []
+
+        center = [8.77, 1]
+        L = 1.7
+        ax_colbar.set_axis_off()
+        ax_colbar.set_xticks([])
+        ax_colbar.set_yticks([])
+
+        # 1
+        wdgs.append(patches.Wedge(center, L/4, -30+90, 30+90, width=None,ec='white',fc=bivcolors_rgba[0],lw=0.1, transform=fig.dpi_scale_trans))
+        #2
+        wdgs.append(patches.Wedge(center, 2*L/4, 0+90, 30+90, width=L/4,ec='white',fc=bivcolors_rgba[1],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 2*L/4, -30+90, 0+90, width=L/4,ec='white',fc=bivcolors_rgba[2],lw=0.1, transform=fig.dpi_scale_trans))
+        #3
+        wdgs.append(patches.Wedge(center, 3*L/4, -30+90, -15+90, width=L/4,ec='white',fc=bivcolors_rgba[6],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 3*L/4, -15+90, 0+90, width=L/4,ec='white',fc=bivcolors_rgba[5],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 3*L/4, 0+90, 15+90, width=L/4,ec='white',fc=bivcolors_rgba[4],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 3*L/4, 15+90, 30+90, width=L/4,ec='white',fc=bivcolors_rgba[3],lw=0.1, transform=fig.dpi_scale_trans))
+        #4
+        wdgs.append(patches.Wedge(center, 4*L/4, -30+90, -22.5+90, width=L/4,ec='white',fc=bivcolors_rgba[14],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, -22.5+90, -15+90, width=L/4,ec='white',fc=bivcolors_rgba[13],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, -15+90, -7.5+90, width=L/4,ec='white',fc=bivcolors_rgba[12],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, -7.5+90, 0+90, width=L/4,ec='white',fc=bivcolors_rgba[11],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, 0+90, 7.5+90, width=L/4,ec='white',fc=bivcolors_rgba[10],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, 7.5+90, 15+90, width=L/4,ec='white',fc=bivcolors_rgba[9],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, 15+90, 22.5+90, width=L/4,ec='white',fc=bivcolors_rgba[8],lw=0.1, transform=fig.dpi_scale_trans))
+        wdgs.append(patches.Wedge(center, 4*L/4, 22.5+90, 30+90, width=L/4,ec='white',fc=bivcolors_rgba[7],lw=0.1, transform=fig.dpi_scale_trans))
+        for wdg in wdgs:
+            ax_colbar.add_patch(wdg)
+        # w = PatchCollection(wdgs, match_original=True)
+        # ax_colbar.add_collection(w)
+        
+        #legend
+        coords = []
+        for i in [14,12,10,8]:
+            coords.append(wdgs[i].get_path().vertices[6])
+        for i in [7,3,2,0]:
+            coords.append(wdgs[i].get_path().vertices[0])
+        print("coords", coords)
+        labels = [str(i) for i in np.arange(0,valmax,valmax/4)]+[str(valmax)]+[str(sigmamax//2)]+[str(3*sigmamax//4)]+[str(sigmamax)]     
+        rot = [30,15,0,-15,-30,60,60,60]
+        vas = ['center']*5+['top']*3
+        offset = [[0,0.05*L]]*5+[[0.05*L,0]]*3
+        for i in range(len(labels)):
+            ax_colbar.text(coords[i][0]+offset[i][0],coords[i][1]+offset[i][1],labels[i],rotation=rot[i],rotation_mode='anchor',ha='center',va=vas[i], transform=fig.dpi_scale_trans, fontsize=8.)
+        
+        # legend titles
+        ax_colbar.text(center[0], center[1]+1.15*L, 'Slip (m)', rotation=0, ha='center', va='center', transform=fig.dpi_scale_trans, fontsize=9.)
+        ax_colbar.text(center[0]+0.39*L, center[1]+0.27*L, 'Standard deviation (m)', rotation=60, ha='center', va='center', transform=fig.dpi_scale_trans, fontsize=9.)
+        
+        ax.set_xlim(np.amin(dis),np.amax(dis) )
+        ax.set_ylim(np.amin(dep),np.amax(dep))
+        ax.locator_params(axis='x', nbins=5)
+        ax.locator_params(axis='y', nbins=5)
+
+
+
+        def update(frame):
+            # Example: replace this with your evolving data
+            slp = slips[frame]
+            sgm = sigmas[frame]
+
+            colval = ColValSup(slp, sgm, slipmax, uncmax)
+            # print("colval", colval)
+
+            colors = [scalarMap.to_rgba(colval[i]) for i in range(len(colval))]
+            p.set_facecolor(colors)
+
+            return [p]
+        
+        ani = FuncAnimation(
+            fig,
+            update,
+            frames=slips.shape[0],        # number of timesteps
+            interval=250,      # 0.5 seconds
+            blit=False
+        )
+
+
+        # plt.savefig(save_path, format='pdf',bbox_inches="tight")
+        ani.save(save_path, writer="ffmpeg", fps=4)
+        # plt.tight_layout()
+        plt.show()              
+
+    except Exception as err:
+        print(type(err))
+        print("ERROR :", str(err))
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print(exc_type, fname, exc_tb.tb_lineno)
+    
+    return
+
+
+
+
+def drawbasemap_multiax(lonlim, latlim, nrows=1, ncols=2, figsize=(7,7)):
+    
+    proj = ccrs.crs.PlateCarree()
+    fig, axes = plt.subplots(nrows=nrows,ncols=ncols,
+                        subplot_kw={'projection': proj},
+                        figsize=figsize,
+                        sharex=True, sharey=True)
+    for ax in axes.reshape(-1):
+        ax.spines['geo'].set_visible(False)
+        ax.spines['left'].set_visible(True)
+        ax.spines['bottom'].set_visible(True)
+        ax.set_extent([lonlim[0],  # minimum lon
+                       lonlim[1],  # max longitude
+                       latlim[0],  # min lat
+                       latlim[1]  # max lat
+                       ])
+        ax.add_feature(ccrs.cartopy.feature.COASTLINE, linestyle='-', alpha=0.5, lw=0.6, edgecolor='gray')
+        ax.add_feature(ccrs.cartopy.feature.BORDERS, linestyle='-', alpha=0.25, lw=0.5, edgecolor='gray')
+        ax.add_feature(ccrs.cartopy.feature.LAND, color='#fafafa')
+        
+        sbs = ax.get_subplotspec()
+        if sbs.is_first_col():
+            gl = ax.gridlines(draw_labels=True, crs=proj)
+            gl.xlabels_top = False
+            gl.ylabels_right = False
+            gl.xlabels_bottom = False
+            gl.xlines = False
+            gl.ylines = False
+            # gl.xlocator = mticker.MaxNLocator(5)
+            gl.ylocator = mticker.MaxNLocator(4)
+            gl.xlabel_style = {'size':  'small'}
+            gl.ylabel_style = {'size':  'small'}
+        elif sbs.is_last_row():
+            gl = ax.gridlines(draw_labels=True, crs=proj)
+            gl.xlabels_top = False
+            gl.ylabels_right = False
+            gl.ylabels_left = False
+            gl.xlines = False
+            gl.ylines = False
+            gl.xlocator = mticker.MaxNLocator(4)
+            gl.ylocator = mticker.MaxNLocator(4)
+            gl.xlabel_style = {'size':  'small'}
+            gl.ylabel_style = {'size':  'small'}
+        elif sbs.is_first_col() and sbs.is_last_row():
+            gl = ax.gridlines(draw_labels=True, crs=proj)
+            gl.xlabels_top = False
+            gl.ylabels_right = False
+            gl.xlines = False
+            gl.ylines = False
+            gl.xlocator = mticker.MaxNLocator(4)
+            gl.ylocator = mticker.MaxNLocator(4)
+            gl.xlabel_style = {'size':  'small'}
+            gl.ylabel_style = {'size':  'small'}
+
+    fig.tight_layout()
+        
+    return fig, axes
+
+def drawinsar(sar, ax, vmin=-10., vmax=10., data='data', label=''):
+    '''
+    data in data, res, synth
+    '''
+    if data in ('data', 'd', 'dat', 'Data'):
+        values = sar.vel
+        plt.text(0.9, 0.9, 'data', ha='right',
+                 size='small', transform = ax.transAxes)
+    elif data in ('synth', 's', 'synt', 'Synth'):
+        values = sar.synth
+        plt.text(0.9, 0.9, 'predictions', ha='right',
+                 size='small', transform = ax.transAxes)
+    elif data in ('res', 'resid', 'residuals', 'r'):
+        values = sar.vel - sar.synth
+        plt.text(0.9, 0.9, 'residuals', ha='right',
+                 size='small', transform = ax.transAxes)
+    
+    if len(label) > 0:
+        plt.text(0.05, 0.90, label, weight='bold',
+                bbox=dict(boxstyle='square', facecolor='none', edgecolor='dimgrey', pad=.2),
+                transform = ax.transAxes)
+
+    cNorm  = colors.Normalize(vmin, vmax)
+    scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=cmo.curl)
+    
+    rects = []
+    for i in range(len(sar.corner)):
+        pts = sar.corner[i] 
+        tl = pts[0:1+1]
+        br = pts[2:3+1]
+        tr = [pts[2], pts[1]]
+        bl = [pts[0], pts[3]]
+        rect = patches.Polygon( [tl, tr, br, bl] )
+        colorval = scalarMap.to_rgba(values[i]*1e2)  # convert to cm
+        rect.set_color(colorval)
+        # rect.set_edgecolor('white')
+        # rect.set_linewidth(0.1)
+        rects.append(rect)
+    p = PatchCollection(rects, match_original=True)
+    ax.add_collection(p)
+    
+    cbaxes = ax.inset_axes([0.1, 0.1, 0.35, 0.05], transform=ax.transAxes)
+    clb = plt.colorbar(scalarMap, cax=cbaxes,orientation='horizontal')
+    clb.ax.set_title('LOS disp. (cm)')
+    # clb.set_ticks([0,vmax/2,vmax])  
+   
+    return
