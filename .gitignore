@@ -6,3 +6,8 @@ qgis/
 .venv/
 results/
 __pycache__/
+qgis/
+*.err
+*.out
+*DS_Store
+.env

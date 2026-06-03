@@ -7,9 +7,11 @@ from pathlib import Path
 
 
 ####    FILEPATHS    ####
-csi_pickle = "../results/inversion_results/in15/inputs/csi.pickle"
-altar_dir = "../results/inversion_results/in15/outputs/"
-resdir = Path("../results/profile_inversion/in15/")
+csi_pickle = "/data/cycle/hintont/projects/ridgecrest/inversion_results/in15/inputs/csi.pickle"
+altar_dir = "/data/cycle/hintont/projects/ridgecrest/inversion_results/in15/outputs/"
+resdir = Path("/data/cycle/hintont/projects/ridgecrest/profile_inversion/in01/")
+optical_ew_datapath = "/data/cycle/hintont/projects/ridgecrest/data/optical/EW_Ridgecrest_1m_utm_detrended.tif"
+optical_ns_datapath = "/data/cycle/hintont/projects/ridgecrest/data/optical/NS_Ridgecrest_1m_utm_detrended.tif"
 resdir.mkdir(parents=True, exist_ok=True)
 
 
@@ -28,13 +30,16 @@ vertical_profiles = vertical_profiles[s]
 
 ####    LOAD OPTICAL DATA    ####
 print("Loading optical data...")
-optical = OpticalData(ew_filepath="../data/optical/EW_Ridgecrest_1m_utm_detrended.tif", ns_filepath="../data/optical/NS_Ridgecrest_1m_utm_detrended.tif")
-optical = optical.clear_nan()
-optical = optical.decimate(10)
-with open(resdir / "optical.pickle", "wb") as f:
-    pickle.dump(optical, f)
-fig, ax =optical.plot(ns=False, profiles=profiles, profile_swathe_width=1000.)
-fig.savefig(resdir / "optical.png", dpi=300)
+if not (resdir / "optical.pickle").exists():
+    optical = OpticalData(ew_filepath=optical_ew_datapath, ns_filepath=optical_ns_datapath)
+    optical = optical.clear_nan()
+    optical = optical.decimate(10)
+    with open(resdir / "optical.pickle", "wb") as f:
+        pickle.dump(optical, f)
+    fig, ax =optical.plot(ns=False, profiles=profiles, profile_swathe_width=1000.)
+    fig.savefig(resdir / "optical.png", dpi=300)
+else:
+    optical = pickle.load(open(resdir / "optical.pickle", "rb"))
 
 ####    FOR EACH PROFILE    ####
 for i, profile in enumerate(profiles):
@@ -104,10 +109,10 @@ for i, profile in enumerate(profiles):
 
 
         ####    SAVE RESULTS    ####
-        fig = inversion.plot_posterior()
-        fig.savefig(resdir / f"profile_{i}.png", dpi=300)
         with open(resdir / f"profile_{i}.pickle", "wb") as f:
             pickle.dump(inversion, f)
+        fig = inversion.plot_posterior()
+        fig.savefig(resdir / f"profile_{i}.png", dpi=300)
 
     except Exception as e:
         print(f"Profile {i} failed: {type(e).__name__}: {e}")
