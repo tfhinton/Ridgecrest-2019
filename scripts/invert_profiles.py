@@ -105,7 +105,7 @@ for i, profile in enumerate(profiles):
         ####    RUN INVERSION    ####
         print("Running inversion...")
         inversion = HamiltonianInversion(model, priors, data, data_covariance)
-        inversion = inversion.run(draws=250, tune=100,chains=4)
+        inversion = inversion.run(draws=120, tune=60,chains=6)
 
 
         ####    SAVE RESULTS    ####
