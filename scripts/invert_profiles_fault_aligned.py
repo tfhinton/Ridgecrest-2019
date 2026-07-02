@@ -104,6 +104,7 @@ N_SHALLOW_INVERTED = 3    # slip on the 3 shallowest patches is inverted; rest s
 
 # --- sampler ---
 DRAWS, TUNE, CHAINS = 120, 60, 6
+TIMEOUT_MINUTES = 15   # per-profile wall-clock cap; accepts partial draws
 
 # --- summary plot: which inverted parameters to show along strike ---
 SUMMARY_PARAMS = ["dz_halfwidth", "modulus_ratio", "slip0", "slip1", "slip2"]
@@ -140,7 +141,7 @@ def load_main_fault():
 def load_optical_window(bbox):
     """Load EW/NS rasters cropped to a shapely box (avoids loading the 20 GB whole scene)."""
     x0, y0, x1, y1 = bbox.bounds
-    opt = OpticalData(ew_filepath=str(OPT_EW), ns_filepath=str(OPT_NS), verbose=False)
+    opt = OpticalData(ew_filepath=str(OPT_EW), ns_filepath=str(OPT_NS), verbose=True)
     opt = opt.clear_nan()
     # y is stored north->south, so the slice must go high -> low
     opt = opt.get_window(x0, x1, y1, y0)
@@ -317,12 +318,12 @@ def plot_inversion(inversion, model, xs, data, path, title):
     for i, p in enumerate(fit.patches):
         depth += [p.top, p.bottom]
         slip += [fit.slips[i]] * 2
-    ax_s.plot(slip, depth, color="navy")
+    ax_s.plot([-s for s in slip], depth, color="navy")
     ax_s.axhspan(0, fit.patches[N_SHALLOW_INVERTED - 1].bottom, color="gold",
                  alpha=0.15, label="inverted")
     ax_s.axvline(0, color="lightgray", ls="--")
     ax_s.invert_yaxis()
-    ax_s.set_xlabel("Slip (m)")
+    ax_s.set_xlabel("Right-lateral slip (m)")
     ax_s.set_ylabel("Depth (m)")
     ax_s.set_title("Slip (median)")
     ax_s.legend(fontsize=8)
@@ -430,8 +431,8 @@ def main():
     altar = AltarOutput(str(ALTAR_DIR))
 
     priors = [
-        UniformDist("dz_halfwidth", 0., 1000.),
-        UniformDist("modulus_ratio", 0.01, 0.9),
+        UniformDist("dz_halfwidth", 0., 2500.),
+        UniformDist("modulus_ratio", 0.2, 0.9),
         UniformDist("slip0", -5., 0.),
         UniformDist("slip1", -10., 0.),
         UniformDist("slip2", -10., 0.),
@@ -455,11 +456,12 @@ def main():
                   f"seeded deep slip {np.round(model.slips[N_SHALLOW_INVERTED:], 2)}")
 
             inversion = HamiltonianInversion(model, priors, data, Cd)
-            inversion = inversion.run(draws=DRAWS, tune=TUNE, chains=CHAINS)
+            inversion = inversion.run(draws=DRAWS, tune=TUNE, chains=CHAINS,
+                                       timeout_minutes=TIMEOUT_MINUTES)
 
             with open(RESDIR / f"profile_{i:03d}.pickle", "wb") as f:
                 pickle.dump(inversion, f)
-            plot_inversion(inversion, model, xs, data, figdir / f"profile_{i:03d}.png",
+            plot_inversion(inversion, model, xs, data, figdir / f"profile_{i:03d}_inv.png",
                            f"Profile {i} inversion (along-strike {along_km:.2f} km)")
 
             # collect for the along-strike summary (most-probable value + 16/84 pct)
@@ -472,7 +474,7 @@ def main():
                             "hi": np.percentile(s, 84)}
             records.append(rec)
             print(f"[inv] {tag}: done, saved pickle + figure.")
-        except Exception as e:
+        except (Exception, KeyboardInterrupt) as e:
             print(f"[inv] {tag} FAILED: {type(e).__name__}: {e}")
 
     ####    3. SUMMARY    ####
