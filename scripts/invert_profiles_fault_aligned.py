@@ -37,6 +37,7 @@ Notes
 
 ####    IMPORTS    ####
 import argparse
+import os
 import pickle
 import time
 import warnings
@@ -71,9 +72,18 @@ MAIN_FAULT_GEOM = 0       # which trace linestring is the main fault
 N_PROFILES      = 20      # number of evenly spaced profiles to invert (full mode)
 
 # --- fault-aligned profiling (all lengths in pixels == metres at 1 m/px) ---
-PLEN        = 1000        # profile half-length (m). Window cost ~ (2*PLEN)^2 / profile
+PLEN        = 5000        # profile half-length (m). 5 km each side of the fault.
 STACK       = 150         # along-strike half-window for stacking (m). Swathe = 2*STACK
 TRACE_SMOOTH = 15
+# Strain (used only to relocate the profile onto the true fault + estimate FZW) is
+# computed only within this half-width of the fault, so its cost no longer scales
+# with PLEN. ~the likely fault-trace error; raise if the fault zone is wider.
+STRAIN_HALF_WIDTH = 200.  # m
+# Parallel workers for the per-profile extraction (forked; Linux). None/1 = serial.
+N_JOBS      = max(1, (os.cpu_count() or 2) - 1)
+# float32 storage roughly halves the profile-buffer memory, which matters at
+# PLEN=5000 over the whole fault. Set to np.float64 to reproduce the old run exactly.
+PROF_DTYPE  = np.float32
 
 # --- binning before inversion (reduces noise + data dimension) ---
 N_BINS          = 200
@@ -168,10 +178,12 @@ def generate_profiles(mode):
           f"(~{opt.ew.size / 1e6:.0f} Mpx)")
 
     print(f"[gen] running evaluate_profiles_fault_aligned "
-          f"(plen={PLEN}, stack={STACK}) ...")
+          f"(plen={PLEN}, stack={STACK}, strain_half_width={STRAIN_HALF_WIDTH}, "
+          f"n_jobs={N_JOBS}) ...")
     t0 = time.time()
     profiles = opt.evaluate_profiles_fault_aligned(
         fault, plen=PLEN, stack=STACK, trace_smooth=TRACE_SMOOTH,
+        strain_half_width=STRAIN_HALF_WIDTH, n_jobs=N_JOBS, prof_dtype=PROF_DTYPE,
         attach_to_fault=True, store=True)
     print(f"[gen] produced {len(profiles)} stacked profiles in "
           f"{time.time() - t0:.0f} s")
