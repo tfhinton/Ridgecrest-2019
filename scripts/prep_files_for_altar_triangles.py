@@ -50,8 +50,8 @@ UTM_ZONE   = 11
 SEED = 0
 
 FAULT_NPZ = [
-    "SNFA-LLFZ-EAST-Eastern_Little_Lake_main_fault-CFM5_remesh.npz",
-    "SNFA-LLFZ-SOUT-Southern_Little_Lake_main_fault-CFM5_remesh.npz",
+    "mainshock_fault_remesh.npz",
+    "foreshock_fault_remesh.npz",
 ]
 
 # Reference normal(s) fixing a consistent positive dip-slip sense per strand (see
@@ -284,7 +284,6 @@ def main():
         strand0 = np.flatnonzero(fault.fault_ids == 0)
         d = fault.depths[strand0]
         ipatch = int(strand0[np.argmin(np.abs(d - np.median(d)))])
-        ipatch = 417
     fig_patch_greens(any_insar, fault, ipatch,
                      os.path.join(FIG_DIR, "patch_greens_function.png"))
 
@@ -293,4 +292,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main() 

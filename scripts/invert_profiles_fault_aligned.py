@@ -22,27 +22,50 @@ Modes (--mode):
          sanity-check the whole pipeline before committing to the full run.
   full   ~N_PROFILES evenly spaced along the main fault (first trace linestring).
 
+Linking to the far-field (AlTar triangular) inversion
+-----------------------------------------------------
+The far-field Bayesian inversion (prep_files_for_altar_triangles.py -> AlTar)
+constrains the deep slip; here we take its most-probable model (per-patch KDE
+mode of the posterior), forward-predict the surface displacement due to the
+DEEP patches only (triangle centroid depth > DEEP_DEPTH_M = 2.5 km, both
+strands, strike- and dip-slip), subtract it from each optical profile, and
+invert the residual for SHALLOW slip only. The forward prediction is computed
+with the same Meade (2007) triangular-dislocation Green's functions as the
+far-field inversion, evaluated ONLY at the binned profile sample points (not
+the full optical scene), so it costs seconds.
+
+The shallow 2D model is discretised at depth interfaces VD = 0 / 250 / 750 /
+1500 / 2500 m -> 4 slip parameters, ALL inverted, plus the damage-zone
+half-width and modulus ratio (6 parameters total). There is no deep-slip
+seeding any more: the deep field is removed from the data instead.
+
+Note on the depth split: the triangular mesh has layer interfaces at 0 / 1500 /
+3000 / 5500 ... m, so "centroid depth > 2500 m" selects exactly the triangles
+lying entirely below 3000 m. Far-field slip attributed to the 1500-3000 m layer
+is therefore NOT removed -- it is re-solved locally by the shallow 2D patches.
+
 Notes
 -----
 * The new profiles already centre xs on the fault (x = 0), so the zero-crossing
-  re-centring of the old script is dropped; only the data mean is removed.
+  re-centring of the old script is dropped; only the data mean is removed
+  (after the deep-field subtraction).
 * The inverted component is the FAULT-PARALLEL (strike-slip) displacement, which
   is row 0 of p.displacements in the fault-aligned method (row 1 is fault-normal).
-  PARALLEL_SIGN lets you flip its polarity if it disagrees with the seeded slip.
-* Deep-patch slip is seeded from the AlTar posterior exactly as before, by
-  projecting each profile's fault midpoint onto the CSI trace to get its
-  along-strike position, then reading the strikeslipmain patches that the local
-  vertical section intersects.
+  PARALLEL_SIGN lets you flip its polarity if it disagrees with the forward
+  model; the deep-field prediction is subtracted in the same signed frame, and
+  the far-field step of data vs prediction is printed as a sign sanity check.
 """
 
 ####    IMPORTS    ####
 import argparse
 import os
 import pickle
+import sys
 import time
 import warnings
 from pathlib import Path
 
+import h5py
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -53,8 +76,12 @@ from scipy.stats import gaussian_kde
 from shapely.geometry import box, LineString
 from shapely.ops import substring
 
-from codes import (OpticalData, Fault, TwoDDzForwardModel, PatchTwoD,
-                   UniformDist, HamiltonianInversion, AltarOutput)
+from codes import (OpticalData, Fault, FaultTriangles, TwoDDzForwardModel,
+                   PatchTwoD, UniformDist, HamiltonianInversion)
+
+# fault mesh / dip-convention config shared with the far-field inversion
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import prep_files_for_altar_triangles as prep
 
 
 ####    FILEPATHS (local Mac paths)    ####
@@ -62,9 +89,8 @@ ROOT          = Path("/Users/hintont/Dev/projects/ridgecrest")
 FAULT_SHP     = ROOT / "data/fault/little_lake_trace_multi.shp"
 OPT_EW        = ROOT / "data/optical/EW_Ridgecrest_1m_utm_detrended.tif"
 OPT_NS        = ROOT / "data/optical/NS_Ridgecrest_1m_utm_detrended.tif"
-CSI_PICKLE    = ROOT / "results/inversion_results/in15/inputs/csi.pickle"
-ALTAR_DIR     = ROOT / "results/inversion_results/in15/outputs/"
-RESDIR        = ROOT / "results/profile_inversion/fa01/"
+ALTAR_STEP    = ROOT / "results/tri01/outputs_16000_12000/step_final.h5"
+RESDIR        = ROOT / "results/profile_inversion/fa02/"
 
 
 ####    PARAMETERS    ####
@@ -94,20 +120,24 @@ NEAR_FAULT_DIST = 400.    # m
 # The fault-aligned parallel component (row 0) steps UP left->right here, but the
 # forward model + negative-slip priors expect a DOWN step (verified: slip=-1 gives
 # left-positive / right-negative). So we flip the data to -1.0 to match the
-# right-lateral convention. CONFIRM this against the real AlTar seed sign on the
-# first full run -- if the deep seed is positive, set this back to +1.0.
+# right-lateral convention. The deep-field prediction is subtracted in the same
+# signed frame; the per-profile far-field step check below confirms consistency.
 PARALLEL_SIGN = -1.0
 
-# --- forward model depth layering (patch interfaces, m) ---
-VD = [0., 500., 1000., 1500., 2750., 4000., 6000., 8000., 11000., 14000.]
-N_SHALLOW_INVERTED = 3    # slip on the 3 shallowest patches is inverted; rest seeded
+# --- deep-field removal (far-field AlTar posterior mode) ---
+DEEP_DEPTH_M    = 2500.   # triangles with centroid depth > this are "deep" (removed)
+KDE_MAX_SAMPLES = 4000    # posterior subsample per patch for the KDE mode
+
+# --- forward model depth layering (patch interfaces, m); ALL slips inverted ---
+VD = [0., 250., 750., 1500., 2500.]
+SLIP_LABELS = [f"slip{i}" for i in range(len(VD) - 1)]
 
 # --- sampler ---
 DRAWS, TUNE, CHAINS = 120, 60, 6
 TIMEOUT_MINUTES = 15   # per-profile wall-clock cap; accepts partial draws
 
 # --- summary plot: which inverted parameters to show along strike ---
-SUMMARY_PARAMS = ["dz_halfwidth", "modulus_ratio", "slip0", "slip1", "slip2"]
+SUMMARY_PARAMS = ["dz_halfwidth", "modulus_ratio"] + SLIP_LABELS
 
 # --- test mode: length of the central trace segment used (m). Kept short so only
 #     a handful of stacked profiles are produced (cost ~ segment length). ---
@@ -201,55 +231,120 @@ def select_profiles(profiles, mode):
     return [(i, profiles[i]) for i in idx]
 
 
-def csi_along_strike_km(csi, easting_m, northing_m, fault_idx=0):
-    """Arc-length (km) of the nearest point on the CSI surface trace to a UTM point (m)."""
-    f = csi.faults[fault_idx]
-    xf = np.asarray(f.xf) * 1000.   # km -> m
-    yf = np.asarray(f.yf) * 1000.
-    best_s, best_d, acc = 0., np.inf, 0.
-    for i in range(len(xf) - 1):
-        ax, ay, bx, by = xf[i], yf[i], xf[i + 1], yf[i + 1]
-        seg2 = (bx - ax) ** 2 + (by - ay) ** 2
-        t = 0. if seg2 == 0 else np.clip(
-            ((easting_m - ax) * (bx - ax) + (northing_m - ay) * (by - ay)) / seg2, 0., 1.)
-        cx, cy = ax + t * (bx - ax), ay + t * (by - ay)
-        d = np.hypot(easting_m - cx, northing_m - cy)
-        seg = np.sqrt(seg2)
-        if d < best_d:
-            best_d, best_s = d, acc + t * seg
-        acc += seg
-    return best_s / 1000.
+####    DEEP-FIELD REMOVAL (far-field AlTar posterior mode)    ####
+def load_triangle_fault():
+    """The merged triangular fault, built exactly as in the far-field prep script
+    (same strands, same dip-slip sign convention -> same GF sense as AlTar's G)."""
+    strands = [FaultTriangles.from_npz(os.path.join(prep.FAULT_DIR, f))
+               for f in prep.FAULT_NPZ]
+    fault = FaultTriangles.merge(strands, name="LLFZ")
+    fault.set_dip_convention(prep.DIP_NORMALS)
+    return fault
 
 
-def seed_deep_slips(model, csi, altar, along_km):
-    """Seed slip on the deep (non-inverted) patches from the AlTar strikeslipmain posterior."""
-    vp = csi.vertical_profile(along_km, fault_idx=0)
-    ss = altar.final["ParameterSets"]["strikeslipmain"]
-    for i in range(N_SHALLOW_INVERTED, len(model.patches)):
-        z = model.patches[i].z
-        match = next((m for m in vp
-                      if m["intersection_top"] * 1000. <= z <= m["intersection_bot"] * 1000.),
-                     None)
-        if match is not None:
-            model.slips[i] = np.median(ss[:, match["patch_idx"]])
-    return model
+def posterior_mode_deep_slips(fault, seed=0):
+    """Per-patch posterior-mode slip vectors (SS, DS) with SHALLOW patches zeroed.
+
+    The AlTar model vector is the ParameterSets concatenated as
+    [strikeslipmain, strikeslipsecond, dipslip, ramp]; SS main+second follow the
+    merged patch order of `load_triangle_fault` (see visualise_altar_triangles).
+    Ramps apply to the InSAR tracks only, so they are irrelevant here.
+    """
+    with h5py.File(ALTAR_STEP, "r") as fh:
+        ps = {k: fh["ParameterSets"][k][:] for k in
+              ("strikeslipmain", "strikeslipsecond", "dipslip")}
+    ss = np.hstack([ps["strikeslipmain"], ps["strikeslipsecond"]])
+    ds = ps["dipslip"]
+    if ss.shape[1] != fault.n_patches or ds.shape[1] != fault.n_patches:
+        raise RuntimeError(f"AlTar posterior has {ss.shape[1]} SS / {ds.shape[1]} "
+                           f"DS patches but the fault has {fault.n_patches}")
+
+    rng = np.random.default_rng(seed)
+    idx = rng.choice(ss.shape[0], size=min(ss.shape[0], KDE_MAX_SAMPLES),
+                     replace=False)
+    ss_mode = np.array([kde_mode(ss[idx, j]) for j in range(ss.shape[1])])
+    ds_mode = np.array([kde_mode(ds[idx, j]) for j in range(ds.shape[1])])
+
+    deep = fault.depths > DEEP_DEPTH_M
+    ss_mode[~deep] = 0.
+    ds_mode[~deep] = 0.
+    print(f"[deep] posterior mode from {ALTAR_STEP.parent.name}/step_final.h5: "
+          f"{int(deep.sum())}/{fault.n_patches} patches deeper than "
+          f"{DEEP_DEPTH_M:.0f} m kept "
+          f"(|SS| up to {np.abs(ss_mode).max():.2f} m, "
+          f"|DS| up to {np.abs(ds_mode).max():.2f} m)")
+    return ss_mode, ds_mode
 
 
-def build_model(profile_xs, csi, altar, along_km):
-    """Construct the layered TwoDDzForwardModel with deep slip seeded from AlTar."""
+def profile_points(profile, xs):
+    """UTM sample points + strike unit vector for one profile.
+
+    The profile trace LineString runs from the xs = -plen end to the xs = +plen
+    end (plen = profile.fault_x), so positions are linear in xs along it. The
+    fault-parallel component (displacements row 0) is the displacement projected
+    onto the local strike bearing, s_hat = (sin strike, cos strike) in (E, N).
+
+    Returns (pts (n, 2) easting/northing, s_hat (2,)).
+    """
+    c = np.asarray(profile.linestring.coords, dtype=float)
+    p1, p2 = c[0], c[-1]
+    length = float(np.hypot(*(p2 - p1)))          # = 2 * plen
+    t = (np.asarray(xs, dtype=float) + profile.fault_x) / length
+    pts = p1[None, :] + t[:, None] * (p2 - p1)[None, :]
+
+    theta = np.radians(profile.strike)
+    s_hat = np.array([np.sin(theta), np.cos(theta)])
+    # the profile direction must be ~perpendicular to the strike used for the
+    # parallel/normal rotation; a large dot product means broken geometry
+    u_hat = (p2 - p1) / length
+    if abs(float(u_hat @ s_hat)) > 0.15:
+        raise RuntimeError(f"profile/strike geometry inconsistent "
+                           f"(|u.s| = {abs(float(u_hat @ s_hat)):.2f})")
+    return pts, s_hat
+
+
+def deep_predictions(fault, ss_mode, ds_mode, prof_pts):
+    """Fault-parallel surface displacement of the deep slip model at each
+    profile's sample points, via one batched TDE Green's-function evaluation.
+
+    prof_pts : list of (pts, s_hat) from `profile_points`.
+    Returns a list of (n_i,) predictions in the PHYSICAL (unsigned) frame of
+    profile.displacements[0].
+    """
+    all_pts = np.vstack([pts for pts, _ in prof_pts])
+    print(f"[deep] computing TDE Green's functions at {len(all_pts)} profile "
+          f"points x {fault.n_patches} patches ...")
+    t0 = time.time()
+    fault.compute_greens_functions(all_pts.T)      # (2, n_patches, 3, n_pts)
+    # E/N displacement of the mode model (shallow slips are zero)
+    u_en = (np.tensordot(ss_mode, fault.gfs[0, :, :2, :], axes=(0, 0))
+            + np.tensordot(ds_mode, fault.gfs[1, :, :2, :], axes=(0, 0)))
+    print(f"[deep] done in {time.time() - t0:.0f} s")
+
+    preds, k = [], 0
+    for pts, s_hat in prof_pts:
+        n = len(pts)
+        preds.append(s_hat @ u_en[:, k:k + n])
+        k += n
+    return preds
+
+
+####    INVERSION PIPELINE    ####
+def build_model(profile_xs):
+    """The layered shallow TwoDDzForwardModel; every patch's slip is inverted."""
     model = TwoDDzForwardModel()
     model.patches = [PatchTwoD(0., (VD[i] + VD[i + 1]) / 2., VD[i + 1] - VD[i])
                      for i in range(len(VD) - 1)]
     model.slips = np.zeros(len(model.patches))
     model.xs = profile_xs
-    seed_deep_slips(model, csi, altar, along_km)
     return model
 
 
 def prepare_data(profile):
-    """Bin-average, pick the fault-parallel component, drop NaNs, estimate covariance, centre.
+    """Bin-average, pick the fault-parallel component, apply PARALLEL_SIGN, drop NaNs.
 
-    Returns (xs, data, data_covariance) ready for the inversion, or None if degenerate.
+    Returns (xs, data_signed) -- NOT yet deep-corrected or centred -- or None if
+    degenerate.
     """
     binned = profile.bin_average(n_bins=N_BINS, n_near_fault_bins=N_NEAR_BINS,
                                  near_fault_dist=NEAR_FAULT_DIST)
@@ -259,21 +354,44 @@ def prepare_data(profile):
     data = parallel[finite].astype(float)
     if data.size < 40:
         return None
+    return xs, data
 
-    # covariance from the far-field band at the negative-x end, detrended
-    cd_est = data[:25]
+
+def finalise_data(data_signed, pred_par, tag):
+    """Subtract the deep-field prediction, estimate the covariance from the
+    residual far field, and centre.
+
+    pred_par is physical (same frame as displacements[0]); the data already
+    carry PARALLEL_SIGN, so the prediction is subtracted in the same signed frame.
+    Returns (data, pred_signed, data_covariance).
+    """
+    pred_signed = PARALLEL_SIGN * pred_par
+    resid = data_signed - pred_signed
+
+    # sign/convention check: the deep model should reproduce the far-field step
+    step_d = np.mean(data_signed[-25:]) - np.mean(data_signed[:25])
+    step_p = np.mean(pred_signed[-25:]) - np.mean(pred_signed[:25])
+    print(f"[inv] {tag}: far-field step data {step_d:+.2f} m, "
+          f"deep model {step_p:+.2f} m")
+    if step_d * step_p < 0.:
+        print(f"[inv] {tag}: WARNING -- deep-model step has the OPPOSITE sign "
+              f"to the data; check PARALLEL_SIGN / slip conventions")
+
+    # covariance from the residual far-field band at the negative-x end, detrended
+    cd_est = resid[:25]
     t = np.arange(cd_est.size)
     detrended = cd_est - np.polyval(np.polyfit(t, cd_est, 1), t)
     std = np.std(detrended)
     if not np.isfinite(std) or std == 0.:
-        std = np.std(data) or 1e-3
-    data_covariance = std ** 2 * np.eye(data.size)
+        std = np.std(resid) or 1e-3
+    data_covariance = std ** 2 * np.eye(resid.size)
 
-    # centre (the new xs is already centred on the fault; only remove the data mean)
-    data = data - np.mean(data)
-    return xs, data, data_covariance
+    # centre (the xs are already centred on the fault; only remove the mean)
+    data = resid - np.mean(resid)
+    return data, pred_signed, data_covariance
 
 
+####    FIGURES    ####
 def plot_profile_only(profile, path, title):
     """First-pass figure: the extracted profile (parallel + normal) before inversion."""
     fig, ax = plt.subplots(figsize=(8, 4.5), layout="constrained")
@@ -290,54 +408,55 @@ def plot_profile_only(profile, path, title):
     plt.close(fig)
 
 
-def plot_inversion(inversion, model, xs, data, path, title):
+def plot_inversion(inversion, model, xs, data, data_signed, pred_signed,
+                   path, title):
     """Second-pass figure: model fit (top) + posterior parameter distributions
     (bottom). Self-contained (matplotlib only) so it does not depend on the
     arviz plotting API, which varies between versions.
     """
     post = inversion.result.posterior
-    labels = ["dz_halfwidth", "modulus_ratio", "slip0", "slip1", "slip2"]
+    labels = ["dz_halfwidth", "modulus_ratio"] + SLIP_LABELS
     samp = {l: post[l].values.flatten() for l in labels}
     med = {l: np.median(s) for l, s in samp.items()}
 
-    # best-fit model curve (posterior medians; deep slip kept at its seeded value)
+    # best-fit model curve (posterior medians)
     fit = model._copy()
     fit.dz_half_width = med["dz_halfwidth"]
     fit.modulus_ratio = med["modulus_ratio"]
-    fit.slips = np.array(fit.slips, dtype=float)
-    fit.slips[:N_SHALLOW_INVERTED] = [med["slip0"], med["slip1"], med["slip2"]]
+    fit.slips = np.array([med[l] for l in SLIP_LABELS], dtype=float)
     fit = fit.run(xs)
 
-    fig = plt.figure(figsize=(11, 7), layout="constrained")
-    gs = gridspec.GridSpec(2, 5, height_ratios=[2, 1], figure=fig)
+    fig = plt.figure(figsize=(12, 7), layout="constrained")
+    gs = gridspec.GridSpec(2, len(labels), height_ratios=[2, 1], figure=fig)
     fig.suptitle(title)
 
-    # --- slip vs depth ---
+    # --- slip vs depth (all patches inverted) ---
     ax_s = fig.add_subplot(gs[0, 0])
     depth, slip = [], []
     for i, p in enumerate(fit.patches):
         depth += [p.top, p.bottom]
         slip += [fit.slips[i]] * 2
     ax_s.plot([-s for s in slip], depth, color="navy")
-    ax_s.axhspan(0, fit.patches[N_SHALLOW_INVERTED - 1].bottom, color="gold",
-                 alpha=0.15, label="inverted")
     ax_s.axvline(0, color="lightgray", ls="--")
     ax_s.invert_yaxis()
     ax_s.set_xlabel("Right-lateral slip (m)")
     ax_s.set_ylabel("Depth (m)")
-    ax_s.set_title("Slip (median)")
-    ax_s.legend(fontsize=8)
+    ax_s.set_title("Shallow slip (median)")
 
-    # --- data vs model fit ---
+    # --- data, deep-field removal, and model fit ---
     ax_f = fig.add_subplot(gs[0, 1:])
-    ax_f.plot(xs, data, color="0.5", lw=1.2, label="data (centred)")
+    ax_f.plot(xs, data_signed - np.mean(data_signed), color="0.8", lw=1.,
+              label="data (pre-removal)")
+    ax_f.plot(xs, pred_signed - np.mean(data_signed), color="seagreen", lw=1.2,
+              ls="--", label="deep model (AlTar mode)")
+    ax_f.plot(xs, data, color="0.35", lw=1.2, label="residual data (inverted)")
     ax_f.plot(xs, fit.sol - np.mean(fit.sol), color="crimson", lw=1.5,
-              label="model fit")
+              label="shallow model fit")
     ax_f.axvline(0, color="lightgray", ls="--")
     ax_f.set_xlabel("Distance from fault (m)")
     ax_f.set_ylabel("Fault-parallel displacement (m)")
-    ax_f.set_title("Model fit")
-    ax_f.legend()
+    ax_f.set_title("Deep-field removal + shallow model fit")
+    ax_f.legend(fontsize=8)
 
     # --- posterior histograms ---
     for k, l in enumerate(labels):
@@ -421,39 +540,46 @@ def main():
         print("[done] --skip-invert set; stopping before inversion.")
         return
 
-    ####    2. INVERT    ####
-    # csi.pickle unpickling needs the csi package (-> okada4py); import lazily so
-    # the generation/plotting stage above works even where that is unavailable.
-    print("[inv] loading CSI + AlTar (needed to seed deep slip) ...")
-    from codes import CSIWrapper  # noqa: F401  (ensures csi class is importable)
-    multi, faults, datasets, trans = pickle.load(open(CSI_PICKLE, "rb"))
-    csi = CSIWrapper(multi, faults, datasets, trans)
-    altar = AltarOutput(str(ALTAR_DIR))
+    ####    2. DEEP-FIELD PREDICTION (far-field AlTar posterior mode)    ####
+    print("\n[deep] loading triangular fault + AlTar posterior mode ...")
+    tri_fault = load_triangle_fault()
+    ss_mode, ds_mode = posterior_mode_deep_slips(tri_fault)
 
-    priors = [
-        UniformDist("dz_halfwidth", 0., 2500.),
-        UniformDist("modulus_ratio", 0.2, 0.9),
-        UniformDist("slip0", -5., 0.),
-        UniformDist("slip1", -10., 0.),
-        UniformDist("slip2", -10., 0.),
-    ]
+    # bin every selected profile first, so the TDE Green's functions can be
+    # computed in one batch at just the binned sample points
+    prepped = []
+    for i, profile in selected:
+        pre = prepare_data(profile)
+        if pre is None:
+            print(f"[inv] profile {i}: too few finite data points, skipping.")
+            continue
+        xs, data_signed = pre
+        pts, s_hat = profile_points(profile, xs)
+        prepped.append((i, profile, xs, data_signed, (pts, s_hat)))
+    if not prepped:
+        print("[done] no usable profiles.")
+        return
+
+    preds = deep_predictions(tri_fault, ss_mode, ds_mode,
+                             [pp[-1] for pp in prepped])
+
+    ####    3. INVERT    ####
+    priors = ([UniformDist("dz_halfwidth", 0., 2500.),
+               UniformDist("modulus_ratio", 0.2, 0.9),
+               UniformDist("slip0", -5., 0.)]
+              + [UniformDist(l, -10., 0.) for l in SLIP_LABELS[1:]])
 
     records = []
-    for n, (i, profile) in enumerate(selected, 1):
-        tag = f"profile {i} ({n}/{len(selected)})"
+    for n, ((i, profile, xs, data_signed, _), pred_par) in \
+            enumerate(zip(prepped, preds), 1):
+        tag = f"profile {i} ({n}/{len(prepped)})"
         try:
             print(f"\n[inv] === {tag} ===")
-            prep = prepare_data(profile)
-            if prep is None:
-                print(f"[inv] {tag}: too few finite data points, skipping.")
-                continue
-            xs, data, Cd = prep
-
-            east, north = profile.fault_utm
-            along_km = csi_along_strike_km(csi, east, north)
-            model = build_model(xs, csi, altar, along_km)
-            print(f"[inv] {tag}: along-strike {along_km:.2f} km, {data.size} data pts, "
-                  f"seeded deep slip {np.round(model.slips[N_SHALLOW_INVERTED:], 2)}")
+            data, pred_signed, Cd = finalise_data(data_signed, pred_par, tag)
+            along_km = profile.x_along_fault / 1000.
+            model = build_model(xs)
+            print(f"[inv] {tag}: along-strike {along_km:.2f} km, "
+                  f"{data.size} data pts")
 
             inversion = HamiltonianInversion(model, priors, data, Cd)
             inversion = inversion.run(draws=DRAWS, tune=TUNE, chains=CHAINS,
@@ -461,7 +587,8 @@ def main():
 
             with open(RESDIR / f"profile_{i:03d}.pickle", "wb") as f:
                 pickle.dump(inversion, f)
-            plot_inversion(inversion, model, xs, data, figdir / f"profile_{i:03d}_inv.png",
+            plot_inversion(inversion, model, xs, data, data_signed, pred_signed,
+                           figdir / f"profile_{i:03d}_inv.png",
                            f"Profile {i} inversion (along-strike {along_km:.2f} km)")
 
             # collect for the along-strike summary (most-probable value + 16/84 pct)
@@ -477,7 +604,7 @@ def main():
         except (Exception, KeyboardInterrupt) as e:
             print(f"[inv] {tag} FAILED: {type(e).__name__}: {e}")
 
-    ####    3. SUMMARY    ####
+    ####    4. SUMMARY    ####
     if len(records) > 1:
         records.sort(key=lambda r: r["along_km"])
         summary_plot(records, figdir / "summary_along_strike.png")
