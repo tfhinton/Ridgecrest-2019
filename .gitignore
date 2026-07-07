@@ -11,3 +11,4 @@ qgis/
 *.out
 *DS_Store
 .env
+notebooks/figures/

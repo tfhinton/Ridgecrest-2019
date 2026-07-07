@@ -105,6 +105,12 @@ TRACE_SMOOTH = 15
 # computed only within this half-width of the fault, so its cost no longer scales
 # with PLEN. ~the likely fault-trace error; raise if the fault zone is wider.
 STRAIN_HALF_WIDTH = 200.  # m
+# Peak-strain search window for the relocation. The drawn trace can locally be
+# tens of m off the true rupture (checked with profile_quicklook.py: ~45 m at
+# 12.7 km along strike, leaving the displacement step off x=0); the relocation
+# can only correct within this half-width. Must stay below the distance to the
+# nearest parallel strand and <= STRAIN_HALF_WIDTH.
+SEARCH_HALF_WIDTH = 100.  # m
 # Parallel workers for the per-profile extraction (forked; Linux). None/1 = serial.
 N_JOBS      = max(1, (os.cpu_count() or 2) - 1)
 # float32 storage roughly halves the profile-buffer memory, which matters at
@@ -215,6 +221,7 @@ def generate_profiles(mode):
     profiles = opt.evaluate_profiles_fault_aligned(
         fault, plen=PLEN, stack=STACK, trace_smooth=TRACE_SMOOTH,
         strain_half_width=STRAIN_HALF_WIDTH, n_jobs=N_JOBS, prof_dtype=PROF_DTYPE,
+        search_half_width=SEARCH_HALF_WIDTH, shift_cap_final=20,
         attach_to_fault=True, store=True)
     print(f"[gen] produced {len(profiles)} stacked profiles in "
           f"{time.time() - t0:.0f} s")

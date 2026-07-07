@@ -43,7 +43,7 @@ is re-run (seeded exactly as in the prep script -- RNG is consumed only by
 ``compute_covariance``) and verified against ``data.h5``; the result is cached
 in ``dataset_coords.npz`` next to the inputs.
 
-Run:  python scripts/visualise_altar_triangles.py results/tri01/outputs_16000_12000
+Run:   16000_12000
 """
 import argparse
 import os
@@ -333,7 +333,7 @@ def _bivariate_scaffold(fault, sections, valmax, sigmamax):
     """
     widths = [sec["width"] for sec in sections]
     dmax = max(float(sec["polys"][:, :, 1].max()) for sec in sections)
-    in_per_km = 0.115
+    in_per_km = 0.15
     wedge_w = 2.6
     fig = plt.figure(figsize=(in_per_km * sum(widths) + wedge_w + 1.0,
                               in_per_km * dmax + 1.7),
