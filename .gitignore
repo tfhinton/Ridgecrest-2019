@@ -12,3 +12,4 @@ qgis/
 *DS_Store
 .env
 notebooks/figures/
+.claude/

@@ -81,7 +81,7 @@ from codes import (OpticalData, Fault, FaultTriangles, TwoDDzForwardModel,
 
 # fault mesh / dip-convention config shared with the far-field inversion
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import prep_files_for_altar_triangles as prep
+import scripts.prep_files_for_altar as prep
 
 
 ####    FILEPATHS (local Mac paths)    ####
@@ -178,7 +178,7 @@ def load_optical_window(bbox):
     """Load EW/NS rasters cropped to a shapely box (avoids loading the 20 GB whole scene)."""
     x0, y0, x1, y1 = bbox.bounds
     opt = OpticalData(ew_filepath=str(OPT_EW), ns_filepath=str(OPT_NS), verbose=True)
-    opt = opt.clear_nan()
+    opt = opt.clear_empty()
     # y is stored north->south, so the slice must go high -> low
     opt = opt.get_window(x0, x1, y1, y0)
     return opt
